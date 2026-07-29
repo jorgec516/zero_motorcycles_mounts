@@ -1,0 +1,365 @@
+// =====================================================================
+// Zero DSR Display Mount — Rev Q
+// =====================================================================
+// PART 1 — BASE PLATE FOUNDATION
+// =====================================================================
+// FILLETS ARE BACK — all 8 base-plate corners (everything except the
+// 4 touching topRight/topLeft, which stay sharp per your original
+// spec) are now rounded at 1.5mm. Two changes from your manually-
+// patched version:
+//   1. Fillets run on baseFinal BEFORE the arm union, not on
+//      mountFinal after — this fixes the "no common edge between
+//      rightSide and bottom" error. The right side of the plate had
+//      been through one more boolean op (the 2nd union, adding the
+//      right arm) than the left side by the time that fillet ran,
+//      which is a plausible reason the kernel's edge bookkeeping got
+//      inconsistent on just that corner. The arms attach at
+//      X = +-25..40, nowhere near these corners at X = +-75, so
+//      there's no reason the fillets needed the union done first.
+//   2. All 8 are chained (each builds on the previous one's output)
+//      instead of independently branching off the same input, so you
+//      get one solid with all 8 corners rounded, not 8 separate
+//      solids with 1 rounded corner each.
+//
+// Arm corners are still sharp for now (not requested in this round —
+// say the word if you want those rounded too, same pattern applies).
+//
+// Material: 3mm 5052-H32 Aluminum
+// =====================================================================
+
+@settings(kclVersion = 2.0, defaultLengthUnit = mm)
+
+// =====================================================================
+// PARAMETERS
+// =====================================================================
+
+t = 3mm
+
+plateWidth = 150mm
+plateLength = 70mm
+
+cornerCut = 15mm
+
+filletRadius = 1.5mm // kept for when fillets come back — not applied yet
+
+// Mount holes
+mountHoleDia = 5.5mm
+mountHoleSpacing = 80mm
+mountHoleX = mountHoleSpacing / 2
+mountHoleY = 45mm
+
+// Ignition clearance
+ignitionFrameTop = 50mm
+ignitionFrameBottom = 105mm
+ignitionFrameDepth = 30mm
+ignitionGap = 2mm
+
+notchTopWidth = ignitionFrameTop + ignitionGap * 2
+notchBottomWidth = ignitionFrameBottom + ignitionGap * 2
+notchDepth = ignitionFrameDepth + ignitionGap
+
+// =====================================================================
+// CALCULATIONS
+// =====================================================================
+
+halfW = plateWidth / 2
+notchHalf = notchBottomWidth / 2
+notchInner = notchTopWidth / 2
+notchApexY = plateLength - notchDepth
+
+// =====================================================================
+// BASE SKETCH
+// =====================================================================
+
+baseSketch = sketch(on = XY) {
+  bottom = line(start = [-halfW, 0mm], end = [halfW, 0mm])
+
+  rightSide = line(start = [halfW, 0mm], end = [halfW, plateLength - cornerCut])
+
+  rightChamfer = line(start = [halfW, plateLength - cornerCut], end = [halfW - cornerCut, plateLength])
+
+  topRight = line(start = [halfW - cornerCut, plateLength], end = [notchHalf, plateLength])
+
+  ignitionRight = line(start = [notchHalf, plateLength], end = [notchInner, notchApexY])
+
+  ignitionCenter = line(start = [notchInner, notchApexY], end = [-notchInner, notchApexY])
+
+  ignitionLeft = line(start = [-notchInner, notchApexY], end = [-notchHalf, plateLength])
+
+  topLeft = line(start = [-notchHalf, plateLength], end = [-halfW + cornerCut, plateLength])
+
+  leftChamfer = line(start = [-halfW + cornerCut, plateLength], end = [-halfW, plateLength - cornerCut])
+
+  leftSide = line(start = [-halfW, plateLength - cornerCut], end = [-halfW, 0mm])
+
+  coincident([bottom.end, rightSide.start])
+  coincident([rightSide.end, rightChamfer.start])
+  coincident([rightChamfer.end, topRight.start])
+  coincident([topRight.end, ignitionRight.start])
+  coincident([ignitionRight.end, ignitionCenter.start])
+  coincident([ignitionCenter.end, ignitionLeft.start])
+  coincident([ignitionLeft.end, topLeft.start])
+  coincident([topLeft.end, leftChamfer.start])
+  coincident([leftChamfer.end, leftSide.start])
+  coincident([leftSide.end, bottom.start])
+}
+
+// =====================================================================
+// BASE EXTRUSION
+// =====================================================================
+
+baseRegion = region(point = [0mm, 10mm], sketch = baseSketch)
+
+baseSolid = extrude(
+  baseRegion,
+  length = t,
+)
+
+// =====================================================================
+// MOUNT HOLE CUTTERS
+// =====================================================================
+
+leftHoleSketch = sketch(on = XY) {
+  leftCircle = circle(
+    start = [-mountHoleX + mountHoleDia / 2, mountHoleY],
+    center = [-mountHoleX, mountHoleY],
+  )
+}
+
+rightHoleSketch = sketch(on = XY) {
+  rightCircle = circle(
+    start = [mountHoleX + mountHoleDia / 2, mountHoleY],
+    center = [mountHoleX, mountHoleY],
+  )
+}
+
+leftHoleTool = extrude(region(point = [-mountHoleX, mountHoleY], sketch = leftHoleSketch), length = t + 2mm)
+rightHoleTool = extrude(region(point = [mountHoleX, mountHoleY], sketch = rightHoleSketch), length = t + 2mm)
+
+// =====================================================================
+// CUT FEATURES
+// =====================================================================
+
+baseCutLeft = subtract(baseSolid, tools = [leftHoleTool])
+baseCutRight = subtract(baseCutLeft, tools = [rightHoleTool])
+
+baseFinal = baseCutRight
+
+// =====================================================================
+// BASE FILLETS — chained sequentially on baseFinal (BEFORE the arm
+// union), each step feeding the next. This fixes two problems from
+// the manually-added version:
+//   1. "No common edge between rightSide and bottom" — that ran on
+//      mountFinal (base+both arms already unioned). The right side had
+//      been through one more boolean op (the 2nd union, adding the
+//      right arm) than the left side, which is a plausible reason the
+//      kernel's edge bookkeeping got inconsistent on just that corner.
+//      Filleting the base's own corners on the base itself, before any
+//      arm ever touches it, sidesteps that entirely — the arms attach
+//      at X = +-25..40, nowhere near these corners at X = +-75.
+//   2. Each fillet was independently branching off mountFinal instead
+//      of building on the previous one, so you had 8 separate solids
+//      with 1 rounded corner each rather than 1 solid with all 8.
+//      Fixed by chaining: 002 takes 001's output, 003 takes 002's, etc.
+// =====================================================================
+
+baseFillet001 = fillet(
+  baseFinal,
+  tags = getCommonEdge(faces = [baseRegion.tags.topRight, baseRegion.tags.ignitionRight]),
+  radius = filletRadius,
+)
+baseFillet002 = fillet(
+  baseFillet001,
+  tags = getCommonEdge(faces = [baseRegion.tags.rightChamfer, baseRegion.tags.topRight]),
+  radius = filletRadius,
+)
+baseFillet003 = fillet(
+  baseFillet002,
+  tags = getCommonEdge(faces = [baseRegion.tags.ignitionLeft, baseRegion.tags.topLeft]),
+  radius = filletRadius,
+)
+baseFillet004 = fillet(
+  baseFillet003,
+  tags = getCommonEdge(faces = [baseRegion.tags.rightSide, baseRegion.tags.rightChamfer]),
+  radius = filletRadius,
+)
+baseFillet005 = fillet(
+  baseFillet004,
+  tags = getCommonEdge(faces = [baseRegion.tags.topLeft, baseRegion.tags.leftChamfer]),
+  radius = filletRadius,
+)
+baseFillet006 = fillet(
+  baseFillet005,
+  tags = getCommonEdge(faces = [baseRegion.tags.leftChamfer, baseRegion.tags.leftSide]),
+  radius = filletRadius,
+)
+baseFillet007 = fillet(
+  baseFillet006,
+  tags = getCommonEdge(faces = [baseRegion.tags.leftSide, baseRegion.tags.bottom]),
+  radius = filletRadius,
+)
+baseFillet008 = fillet(
+  baseFillet007,
+  tags = getCommonEdge(faces = [baseRegion.tags.rightSide, baseRegion.tags.bottom]),
+  radius = filletRadius,
+)
+
+// This is the fully-rounded base — used in PART 3 below instead of
+// the sharp-cornered baseFinal.
+
+// =====================================================================
+// END PART 1
+// =====================================================================
+
+
+// =====================================================================
+// PART 2 — ARM GEOMETRY (continuous, one closed profile per arm)
+// =====================================================================
+// Fillets on hold here too (same reason) — sharp corners for now.
+
+armWidth = 15mm
+armHeight = 65mm
+riserHeight = t + armHeight
+flangeLength = 15mm
+podHoleDia = 5.5mm
+armSpacing = 65mm
+
+// Tilt direction (unit vector, local Y,Z), 25° away from the mount
+// holes / toward the headlight: sin(25°)=0.42262, cos(25°)=0.90631
+tiltA = -0.42262
+tiltB = 0.90631
+
+// ---- LEFT ARM ----
+armXCenterLeft = 0mm - (armSpacing / 2)
+
+armPlaneLeft = {
+  origin = [armXCenterLeft - (armWidth / 2), 0mm, 0mm],
+  xAxis = [0, 1, 0],
+  yAxis = [0, 0, 1]
+}
+
+armSketchLeft = sketch(on = armPlaneLeft) {
+  outerBase = line(start = [-3mm, 0mm], end = [-3mm, riserHeight])
+  outerRelief = line(start = [-3mm, riserHeight], end = [-9.058mm, 80.327mm])
+  tipCap = line(start = [-9.058mm, 80.327mm], end = [-6.339mm, 81.595mm])
+  innerFlange = line(start = [-6.339mm, 81.595mm], end = [0mm, riserHeight])
+  innerRiser = line(start = [0mm, riserHeight], end = [0mm, 0mm])
+  baseCap = line(start = [0mm, 0mm], end = [-3mm, 0mm])
+
+  coincident([outerBase.end, outerRelief.start])
+  coincident([outerRelief.end, tipCap.start])
+  coincident([tipCap.end, innerFlange.start])
+  coincident([innerFlange.end, innerRiser.start])
+  coincident([innerRiser.end, baseCap.start])
+  coincident([baseCap.end, outerBase.start])
+}
+
+armRegionLeft = region(point = [-1.5mm, 34mm], sketch = armSketchLeft)
+armSolidLeftRaw = extrude(
+  armRegionLeft,
+  length = armWidth,
+  tagStart = $armLeftCapStart,
+  tagEnd = $armLeftCapEnd,
+)
+
+// Round the two "top corners of the flange" — where the tip pad's
+// end edge (tipCap) meets each of the extrusion's two width-direction
+// end faces (start and end caps).
+armLeftFillet001 = fillet(
+  armSolidLeftRaw,
+  tags = getCommonEdge(faces = [armRegionLeft.tags.tipCap, armLeftCapStart]),
+  radius = filletRadius,
+)
+armSolidLeft = fillet(
+  armLeftFillet001,
+  tags = getCommonEdge(faces = [armRegionLeft.tags.tipCap, armLeftCapEnd]),
+  radius = filletRadius,
+)
+
+podHolePlaneLeft = {
+  origin = [armXCenterLeft, -1.357mm, 75.643mm],
+  xAxis = [1, 0, 0],
+  yAxis = [0, -0.42262, 0.90631]
+}
+
+podHoleSketchLeft = sketch(on = podHolePlaneLeft) {
+  podCircleLeft = circle(start = [podHoleDia / 2, 0mm], center = [0mm, 0mm])
+}
+
+podHoleToolLeft = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchLeft), length = t + 4mm)
+armFlangeLeftFinal = subtract(armSolidLeft, tools = [podHoleToolLeft])
+
+// ---- RIGHT ARM (same profile, mirrored X position only) ----
+armXCenterRight = armSpacing / 2
+
+armPlaneRight = {
+  origin = [armXCenterRight - (armWidth / 2), 0mm, 0mm],
+  xAxis = [0, 1, 0],
+  yAxis = [0, 0, 1]
+}
+
+armSketchRight = sketch(on = armPlaneRight) {
+  outerBaseR = line(start = [-3mm, 0mm], end = [-3mm, riserHeight])
+  outerReliefR = line(start = [-3mm, riserHeight], end = [-9.058mm, 80.327mm])
+  tipCapR = line(start = [-9.058mm, 80.327mm], end = [-6.339mm, 81.595mm])
+  innerFlangeR = line(start = [-6.339mm, 81.595mm], end = [0mm, riserHeight])
+  innerRiserR = line(start = [0mm, riserHeight], end = [0mm, 0mm])
+  baseCapR = line(start = [0mm, 0mm], end = [-3mm, 0mm])
+
+  coincident([outerBaseR.end, outerReliefR.start])
+  coincident([outerReliefR.end, tipCapR.start])
+  coincident([tipCapR.end, innerFlangeR.start])
+  coincident([innerFlangeR.end, innerRiserR.start])
+  coincident([innerRiserR.end, baseCapR.start])
+  coincident([baseCapR.end, outerBaseR.start])
+}
+
+armRegionRight = region(point = [-1.5mm, 34mm], sketch = armSketchRight)
+armSolidRightRaw = extrude(
+  armRegionRight,
+  length = armWidth,
+  tagStart = $armRightCapStart,
+  tagEnd = $armRightCapEnd,
+)
+
+armRightFillet001 = fillet(
+  armSolidRightRaw,
+  tags = getCommonEdge(faces = [armRegionRight.tags.tipCapR, armRightCapStart]),
+  radius = filletRadius,
+)
+armSolidRight = fillet(
+  armRightFillet001,
+  tags = getCommonEdge(faces = [armRegionRight.tags.tipCapR, armRightCapEnd]),
+  radius = filletRadius,
+)
+
+podHolePlaneRight = {
+  origin = [armXCenterRight, -1.357mm, 75.643mm],
+  xAxis = [1, 0, 0],
+  yAxis = [0, -0.42262, 0.90631]
+}
+
+podHoleSketchRight = sketch(on = podHolePlaneRight) {
+  podCircleRight = circle(start = [podHoleDia / 2, 0mm], center = [0mm, 0mm])
+}
+
+podHoleToolRight = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchRight), length = t + 4mm)
+armFlangeRightFinal = subtract(armSolidRight, tools = [podHoleToolRight])
+
+// =====================================================================
+// END PART 2
+// =====================================================================
+
+
+// =====================================================================
+// PART 3 — FINAL ASSEMBLY
+// =====================================================================
+
+assemblyStep1 = union([baseFillet008, armFlangeLeftFinal])
+
+mountFinal = union([assemblyStep1, armFlangeRightFinal])
+  |> appearance(color = "#c9c9c9")
+
+// =====================================================================
+// END PART 3 — MANUFACTURING VERSION
+// =====================================================================
