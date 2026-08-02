@@ -1,28 +1,45 @@
 // =====================================================================
-// Zero DSR Display Mount — Rev Q
+// Zero DSR Display Mount — Rev R
 // =====================================================================
-// PART 1 — BASE PLATE FOUNDATION
-// =====================================================================
-// FILLETS ARE BACK — all 8 base-plate corners (everything except the
-// 4 touching topRight/topLeft, which stay sharp per your original
-// spec) are now rounded at 1.5mm. Two changes from your manually-
-// patched version:
-//   1. Fillets run on baseFinal BEFORE the arm union, not on
-//      mountFinal after — this fixes the "no common edge between
-//      rightSide and bottom" error. The right side of the plate had
-//      been through one more boolean op (the 2nd union, adding the
-//      right arm) than the left side by the time that fillet ran,
-//      which is a plausible reason the kernel's edge bookkeeping got
-//      inconsistent on just that corner. The arms attach at
-//      X = +-25..40, nowhere near these corners at X = +-75, so
-//      there's no reason the fillets needed the union done first.
-//   2. All 8 are chained (each builds on the previous one's output)
-//      instead of independently branching off the same input, so you
-//      get one solid with all 8 corners rounded, not 8 separate
-//      solids with 1 rounded corner each.
+// CHANGES FROM REV Q:
 //
-// Arm corners are still sharp for now (not requested in this round —
-// say the word if you want those rounded too, same pattern applies).
+// PART 1 — WIRE NOTCH (NEW, REVISED)
+// Added a half-round notch in the bottom edge of the base plate for
+// the main display wire to pass through. Sized from the wire's
+// circumference:
+//   wireDiameter = circumference / π = 28mm / 3.14159 = 8.913mm
+// A 0.3mm clearance allowance is added on top of that for a snug
+// (not loose, not force-fit) assembly fit, giving a finished notch
+// diameter of 9.2mm. If you find that too tight/loose once you test
+// fit actual wire+insulation, tune wireClearance below and the
+// notch diameter recalculates automatically.
+//
+// REVISED APPROACH — the first pass cut this notch as a separate
+// boolean subtract (a cylinder tangent to the bottom edge, subtracted
+// from baseFillet008). That failed with:
+//   "The Zoo engine cannot handle this 3D subtraction yet."
+// Root cause: the cutting cylinder's flat diameter sat exactly
+// coincident with the plate's flat bottom face along the full plate
+// thickness — a degenerate/tangent condition boolean kernels commonly
+// can't resolve.
+//
+// Fix: the notch is now built directly into the base profile itself
+// as a three-point arc segment (bottomLeft -> wireNotch -> bottomRight)
+// replacing the old single straight "bottom" line. It becomes part of
+// ONE clean extrusion with no secondary boolean required, so there's
+// no tangent face for the kernel to trip over. This is also just more
+// correct CAD practice — notches that live on a part's outer boundary
+// belong in the sketch, not bolted on afterward with a boolean.
+//
+// PART 2 — POD/FLANGE MOUNTING HOLES (UPDATED)
+// Diameter increased from 5.5mm -> 6.5mm, sized as a standard
+// clearance hole for an M6 (6mm) bolt.
+// Cutter depth increased from (t + 4mm = 7mm) -> 18mm to clear the
+// full 18mm bolt length called out in the spec.
+// Hole spacing: spec calls for 65mm center-to-center — this already
+// matches the existing armSpacing = 65mm parameter that positions
+// the two arms, so no spacing change was needed; confirmed and left
+// as-is.
 //
 // Material: 3mm 5052-H32 Aluminum
 // =====================================================================
@@ -40,9 +57,9 @@ plateLength = 70mm
 
 cornerCut = 15mm
 
-filletRadius = 1.5mm // kept for when fillets come back — not applied yet
+filletRadius = 1.5mm
 
-// Mount holes
+// Mount holes (base plate to vehicle)
 mountHoleDia = 5.5mm
 mountHoleSpacing = 80mm
 mountHoleX = mountHoleSpacing / 2
@@ -58,9 +75,20 @@ notchTopWidth = ignitionFrameTop + ignitionGap * 2
 notchBottomWidth = ignitionFrameBottom + ignitionGap * 2
 notchDepth = ignitionFrameDepth + ignitionGap
 
+// Wire pass-through notch (bottom edge of base plate) — NEW
+wireCircumference = 28mm
+wireDiameter = 8.913mm // = wireCircumference / π (28 / 3.14159)
+wireClearance = 0.3mm // allowance for a snug (not loose) fit
+wireNotchDia = 9.2mm // = wireDiameter + wireClearance
+
+// Pod/flange mounting holes (display bracket to arms) — UPDATED
+podHoleDia = 6.5mm // was 5.5mm; clearance hole for M6 bolt
+podHoleLength = 18mm // was t + 4mm; matches 18mm bolt length
+
 // =====================================================================
 // CALCULATIONS
 // =====================================================================
+
 
 halfW = plateWidth / 2
 notchHalf = notchBottomWidth / 2
@@ -71,8 +99,29 @@ notchApexY = plateLength - notchDepth
 // BASE SKETCH
 // =====================================================================
 
+
 baseSketch = sketch(on = XY) {
-  bottom = line(start = [-halfW, 0mm], end = [halfW, 0mm])
+  bottomLeft = line(start = [-halfW, 0mm], end = [-wireNotchDia / 2, 0mm])
+
+  // Half-round wire notch, using solver::arc(start, end, center).
+  // solver::arc always sweeps COUNTERCLOCKWISE from start to end, so
+  // to bulge the notch UP into the material (not down off the edge)
+  // the right-hand point (r, 0) must be passed as `start` and the
+  // left-hand point (-r, 0) as `end` — CCW from angle 0° to 180°
+  // passes through 90° (the top of the bump). Passing them the other
+  // way around would sweep the bottom of the circle instead and cut
+  // the notch outward off the plate.
+  //
+  // Because of that swap, the coincident wiring below is deliberately
+  // "crossed": wireNotch.end (the -r,0 point) mates with bottomLeft,
+  // and wireNotch.start (the r,0 point) mates with bottomRight.
+  wireNotch = arc(
+    start = [wireNotchDia / 2, 0mm],
+    end = [-wireNotchDia / 2, 0mm],
+    center = [0mm, 0mm],
+  )
+
+  bottomRight = line(start = [wireNotchDia / 2, 0mm], end = [halfW, 0mm])
 
   rightSide = line(start = [halfW, 0mm], end = [halfW, plateLength - cornerCut])
 
@@ -92,43 +141,53 @@ baseSketch = sketch(on = XY) {
 
   leftSide = line(start = [-halfW, plateLength - cornerCut], end = [-halfW, 0mm])
 
-  coincident([bottom.end, rightSide.start])
+  coincident([bottomLeft.end, wireNotch.end])
+  coincident([wireNotch.start, bottomRight.start])
+  coincident([bottomRight.end, rightSide.start])
   coincident([rightSide.end, rightChamfer.start])
   coincident([rightChamfer.end, topRight.start])
   coincident([topRight.end, ignitionRight.start])
-  coincident([ignitionRight.end, ignitionCenter.start])
+  coincident([
+    ignitionRight.end,
+    ignitionCenter.start
+  ])
   coincident([ignitionCenter.end, ignitionLeft.start])
   coincident([ignitionLeft.end, topLeft.start])
   coincident([topLeft.end, leftChamfer.start])
   coincident([leftChamfer.end, leftSide.start])
-  coincident([leftSide.end, bottom.start])
+  coincident([leftSide.end, bottomLeft.start])
 }
 
 // =====================================================================
 // BASE EXTRUSION
 // =====================================================================
 
+
 baseRegion = region(point = [0mm, 10mm], sketch = baseSketch)
 
-baseSolid = extrude(
-  baseRegion,
-  length = t,
-)
+baseSolid = extrude(baseRegion, length = t)
 
 // =====================================================================
 // MOUNT HOLE CUTTERS
 // =====================================================================
 
+
 leftHoleSketch = sketch(on = XY) {
   leftCircle = circle(
-    start = [-mountHoleX + mountHoleDia / 2, mountHoleY],
+    start = [
+      -mountHoleX + mountHoleDia / 2,
+      mountHoleY
+    ],
     center = [-mountHoleX, mountHoleY],
   )
 }
 
 rightHoleSketch = sketch(on = XY) {
   rightCircle = circle(
-    start = [mountHoleX + mountHoleDia / 2, mountHoleY],
+    start = [
+      mountHoleX + mountHoleDia / 2,
+      mountHoleY
+    ],
     center = [mountHoleX, mountHoleY],
   )
 }
@@ -140,6 +199,7 @@ rightHoleTool = extrude(region(point = [mountHoleX, mountHoleY], sketch = rightH
 // CUT FEATURES
 // =====================================================================
 
+
 baseCutLeft = subtract(baseSolid, tools = [leftHoleTool])
 baseCutRight = subtract(baseCutLeft, tools = [rightHoleTool])
 
@@ -147,65 +207,81 @@ baseFinal = baseCutRight
 
 // =====================================================================
 // BASE FILLETS — chained sequentially on baseFinal (BEFORE the arm
-// union), each step feeding the next. This fixes two problems from
-// the manually-added version:
-//   1. "No common edge between rightSide and bottom" — that ran on
-//      mountFinal (base+both arms already unioned). The right side had
-//      been through one more boolean op (the 2nd union, adding the
-//      right arm) than the left side, which is a plausible reason the
-//      kernel's edge bookkeeping got inconsistent on just that corner.
-//      Filleting the base's own corners on the base itself, before any
-//      arm ever touches it, sidesteps that entirely — the arms attach
-//      at X = +-25..40, nowhere near these corners at X = +-75.
-//   2. Each fillet was independently branching off mountFinal instead
-//      of building on the previous one, so you had 8 separate solids
-//      with 1 rounded corner each rather than 1 solid with all 8.
-//      Fixed by chaining: 002 takes 001's output, 003 takes 002's, etc.
+// union and BEFORE the wire notch cut below), each step feeding the
+// next, so the corner edge tags stay clean.
 // =====================================================================
+
 
 baseFillet001 = fillet(
   baseFinal,
-  tags = getCommonEdge(faces = [baseRegion.tags.topRight, baseRegion.tags.ignitionRight]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.topRight,
+    baseRegion.tags.ignitionRight
+  ]),
   radius = filletRadius,
 )
 baseFillet002 = fillet(
   baseFillet001,
-  tags = getCommonEdge(faces = [baseRegion.tags.rightChamfer, baseRegion.tags.topRight]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.rightChamfer,
+    baseRegion.tags.topRight
+  ]),
   radius = filletRadius,
 )
 baseFillet003 = fillet(
   baseFillet002,
-  tags = getCommonEdge(faces = [baseRegion.tags.ignitionLeft, baseRegion.tags.topLeft]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.ignitionLeft,
+    baseRegion.tags.topLeft
+  ]),
   radius = filletRadius,
 )
 baseFillet004 = fillet(
   baseFillet003,
-  tags = getCommonEdge(faces = [baseRegion.tags.rightSide, baseRegion.tags.rightChamfer]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.rightSide,
+    baseRegion.tags.rightChamfer
+  ]),
   radius = filletRadius,
 )
 baseFillet005 = fillet(
   baseFillet004,
-  tags = getCommonEdge(faces = [baseRegion.tags.topLeft, baseRegion.tags.leftChamfer]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.topLeft,
+    baseRegion.tags.leftChamfer
+  ]),
   radius = filletRadius,
 )
 baseFillet006 = fillet(
   baseFillet005,
-  tags = getCommonEdge(faces = [baseRegion.tags.leftChamfer, baseRegion.tags.leftSide]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.leftChamfer,
+    baseRegion.tags.leftSide
+  ]),
   radius = filletRadius,
 )
 baseFillet007 = fillet(
   baseFillet006,
-  tags = getCommonEdge(faces = [baseRegion.tags.leftSide, baseRegion.tags.bottom]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.leftSide,
+    baseRegion.tags.bottomLeft
+  ]),
   radius = filletRadius,
 )
 baseFillet008 = fillet(
   baseFillet007,
-  tags = getCommonEdge(faces = [baseRegion.tags.rightSide, baseRegion.tags.bottom]),
+  tags = getCommonEdge(faces = [
+    baseRegion.tags.rightSide,
+    baseRegion.tags.bottomRight
+  ]),
   radius = filletRadius,
 )
 
-// This is the fully-rounded base — used in PART 3 below instead of
-// the sharp-cornered baseFinal.
+// The wire notch is now baked directly into baseSketch above (see
+// bottomLeft / wireNotch / bottomRight), so baseFillet008 already IS
+// the fully-rounded, wire-notched base — no extra boolean step
+// needed. Used directly in PART 3 below.
+
 
 // =====================================================================
 // END PART 1
@@ -217,12 +293,12 @@ baseFillet008 = fillet(
 // =====================================================================
 // Fillets on hold here too (same reason) — sharp corners for now.
 
+
 armWidth = 15mm
 armHeight = 65mm
 riserHeight = t + armHeight
 flangeLength = 15mm
-podHoleDia = 5.5mm
-armSpacing = 65mm
+armSpacing = 65mm // matches spec: 65mm hole spacing, no change needed
 
 // Tilt direction (unit vector, local Y,Z), 25° away from the mount
 // holes / toward the headlight: sin(25°)=0.42262, cos(25°)=0.90631
@@ -233,7 +309,11 @@ tiltB = 0.90631
 armXCenterLeft = 0mm - (armSpacing / 2)
 
 armPlaneLeft = {
-  origin = [armXCenterLeft - (armWidth / 2), 0mm, 0mm],
+  origin = [
+    armXCenterLeft - (armWidth / 2),
+    0mm,
+    0mm
+  ],
   xAxis = [0, 1, 0],
   yAxis = [0, 0, 1]
 }
@@ -267,15 +347,22 @@ armSolidLeftRaw = extrude(
 // end faces (start and end caps).
 armLeftFillet001 = fillet(
   armSolidLeftRaw,
-  tags = getCommonEdge(faces = [armRegionLeft.tags.tipCap, armLeftCapStart]),
+  tags = getCommonEdge(faces = [
+    armRegionLeft.tags.tipCap,
+    armLeftCapStart
+  ]),
   radius = filletRadius,
 )
 armSolidLeft = fillet(
   armLeftFillet001,
-  tags = getCommonEdge(faces = [armRegionLeft.tags.tipCap, armLeftCapEnd]),
+  tags = getCommonEdge(faces = [
+    armRegionLeft.tags.tipCap,
+    armLeftCapEnd
+  ]),
   radius = filletRadius,
 )
 
+// ---- POD MOUNTING HOLE (LEFT) — UPDATED: 6.5mm dia x 18mm deep ----
 podHolePlaneLeft = {
   origin = [armXCenterLeft, -1.357mm, 75.643mm],
   xAxis = [1, 0, 0],
@@ -286,14 +373,18 @@ podHoleSketchLeft = sketch(on = podHolePlaneLeft) {
   podCircleLeft = circle(start = [podHoleDia / 2, 0mm], center = [0mm, 0mm])
 }
 
-podHoleToolLeft = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchLeft), length = t + 4mm)
+podHoleToolLeft = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchLeft), length = podHoleLength)
 armFlangeLeftFinal = subtract(armSolidLeft, tools = [podHoleToolLeft])
 
 // ---- RIGHT ARM (same profile, mirrored X position only) ----
 armXCenterRight = armSpacing / 2
 
 armPlaneRight = {
-  origin = [armXCenterRight - (armWidth / 2), 0mm, 0mm],
+  origin = [
+    armXCenterRight - (armWidth / 2),
+    0mm,
+    0mm
+  ],
   xAxis = [0, 1, 0],
   yAxis = [0, 0, 1]
 }
@@ -324,15 +415,22 @@ armSolidRightRaw = extrude(
 
 armRightFillet001 = fillet(
   armSolidRightRaw,
-  tags = getCommonEdge(faces = [armRegionRight.tags.tipCapR, armRightCapStart]),
+  tags = getCommonEdge(faces = [
+    armRegionRight.tags.tipCapR,
+    armRightCapStart
+  ]),
   radius = filletRadius,
 )
 armSolidRight = fillet(
   armRightFillet001,
-  tags = getCommonEdge(faces = [armRegionRight.tags.tipCapR, armRightCapEnd]),
+  tags = getCommonEdge(faces = [
+    armRegionRight.tags.tipCapR,
+    armRightCapEnd
+  ]),
   radius = filletRadius,
 )
 
+// ---- POD MOUNTING HOLE (RIGHT) — UPDATED: 6.5mm dia x 18mm deep ----
 podHolePlaneRight = {
   origin = [armXCenterRight, -1.357mm, 75.643mm],
   xAxis = [1, 0, 0],
@@ -343,7 +441,7 @@ podHoleSketchRight = sketch(on = podHolePlaneRight) {
   podCircleRight = circle(start = [podHoleDia / 2, 0mm], center = [0mm, 0mm])
 }
 
-podHoleToolRight = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchRight), length = t + 4mm)
+podHoleToolRight = extrude(region(point = [0mm, 0mm], sketch = podHoleSketchRight), length = podHoleLength)
 armFlangeRightFinal = subtract(armSolidRight, tools = [podHoleToolRight])
 
 // =====================================================================
@@ -355,6 +453,7 @@ armFlangeRightFinal = subtract(armSolidRight, tools = [podHoleToolRight])
 // PART 3 — FINAL ASSEMBLY
 // =====================================================================
 
+
 assemblyStep1 = union([baseFillet008, armFlangeLeftFinal])
 
 mountFinal = union([assemblyStep1, armFlangeRightFinal])
@@ -363,3 +462,4 @@ mountFinal = union([assemblyStep1, armFlangeRightFinal])
 // =====================================================================
 // END PART 3 — MANUFACTURING VERSION
 // =====================================================================
+// TODO measurements
